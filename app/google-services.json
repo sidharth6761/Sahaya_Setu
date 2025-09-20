@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "290279683385",
+    "project_id": "civilq-61e20",
+    "storage_bucket": "civilq-61e20.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:290279683385:android:2b173053764cb3c60fe4e8",
+        "android_client_info": {
+          "package_name": "com.civilq.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAc94GrdgCRAPYKoXxwpFXW9rzo2DM7RfI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:290279683385:android:bcf00990a506ce950fe4e8",
+        "android_client_info": {
+          "package_name": "com.sid.civilq_1"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAc94GrdgCRAPYKoXxwpFXW9rzo2DM7RfI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
