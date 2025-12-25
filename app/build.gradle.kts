@@ -1,9 +1,20 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.google.gms.google.services)
     id("kotlin-parcelize")
+    id("org.jetbrains.kotlin.plugin.serialization") version "1.9.23"
+}
+
+// Read the local properties file to get the API key
+val localProperties = Properties()
+val localPropertiesFile = project.rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localProperties.load(FileInputStream(localPropertiesFile))
 }
 
 android {
@@ -18,6 +29,9 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Make the API key available in the app's build config
+        buildConfigField("String", "GEMINI_API_KEY", "\"${localProperties.getProperty("GEMINI_API_KEY")}\"")
     }
 
     buildTypes {
@@ -41,6 +55,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true // Enable BuildConfig generation
     }
 }
 
@@ -58,6 +73,10 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.runtime)
     implementation(libs.androidx.compose.foundation.layout)
+    implementation(libs.androidx.compose.foundation)
+    implementation(libs.androidx.camera.core)
+    implementation(libs.navigation.compose)
+    implementation(libs.androidx.work.runtime.ktx)
 
     // Debug tools for Compose
     debugImplementation(libs.androidx.compose.ui.tooling)
@@ -89,7 +108,8 @@ dependencies {
     implementation("com.google.accompanist:accompanist-permissions:0.34.0")
 
     // --- Generative AI ---
-    implementation(libs.generativeai)
+    implementation("com.google.ai.client.generativeai:generativeai:0.8.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 
     // --- Testing ---
     testImplementation(libs.junit)
@@ -97,4 +117,5 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+
 }

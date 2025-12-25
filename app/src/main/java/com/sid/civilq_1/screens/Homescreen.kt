@@ -1,39 +1,40 @@
 package com.sid.civilq_1.ui.screens
 
+import android.annotation.SuppressLint
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
+
 
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 
 import androidx.compose.ui.draw.clip
 import android.content.Intent
-import android.net.Uri
-import androidx.compose.material.icons.filled.Star
+
+
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.painter.Painter
+
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.Font
-import androidx.compose.ui.text.font.FontStyle
+
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
-import com.google.ai.client.generativeai.Chat
+
 import com.sid.civilq_1.model.Report
 import com.sid.civilq_1.viewmodel.ReportViewModel
 import com.sid.civilq_1.components.getUserLocation
+import androidx.core.net.toUri
 
 val ActiveColor = Color(0xFF4A90E2) // Blue for Active
 val SolvedColor = Color(0xFF50E3C2)  // Green for Solved
@@ -68,7 +69,7 @@ fun HomeScreen(
     val filteredReports = nearbyReports.filter { it.status == selectedTab }
 
     // Main container with Box to allow floating button
-    Box() {
+    Box {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -217,6 +218,7 @@ fun SegmentedTab(
     }
 }
 
+@SuppressLint("UseKtx")
 @Composable
 fun EmergencyContactButton() {
     val context = LocalContext.current
@@ -225,7 +227,7 @@ fun EmergencyContactButton() {
     Button(
         onClick = {
             val intent = Intent(Intent.ACTION_DIAL).apply {
-                data = Uri.parse("tel:$emergencyNumber")
+                data = "tel:$emergencyNumber".toUri()
             }
             context.startActivity(intent)
         },

@@ -22,7 +22,7 @@ import com.sid.civilq_1.screens.ProfileScreen
 import com.sid.civilq_1.screens.ReportDetailScreen
 import com.sid.civilq_1.screens.SignUpScreen
 import com.sid.civilq_1.ui.screens.HomeScreen
-import com.sid.civilq_1.ui.screens.ReportScreen
+import com.sid.civilq_1.screens.ReportScreen
 import com.sid.civilq_1.viewmodel.ReportViewModel
 
 @OptIn(ExperimentalAnimationApi::class)
