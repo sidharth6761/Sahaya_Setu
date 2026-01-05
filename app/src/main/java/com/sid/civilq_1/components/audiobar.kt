@@ -30,6 +30,7 @@ import com.sid.civilq_1.R
 
 
 
+
 @Composable
 fun VoiceNoteBar(
     isRecording: Boolean,
@@ -39,41 +40,63 @@ fun VoiceNoteBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFFE3F2FD), RoundedCornerShape(50))
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .height(50.dp)
+            .background(
+                color = if (isRecording) Color(0xFFFFEBEE) else Color(0xFFF1F3F4),
+                shape = RoundedCornerShape(25.dp)
+            )
+            .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IconButton(onClick = onMicClick) {
-            Icon(
-                painter = painterResource(
-                    if (isRecording) R.drawable.mic_svgrepo_com else R.drawable.mic_off
-                ),
-                contentDescription = "Record",
-                tint = Color.White,
+        // Record/Stop Button
+        IconButton(
+            onClick = onMicClick,
+            modifier = Modifier.size(38.dp)
+        ) {
+            Box(
                 modifier = Modifier
-                    .size(36.dp)
-                    .background(Color(0xFF2196F3), CircleShape)
-            )
+                    .fillMaxSize()
+                    .background(
+                        color = if (isRecording) Color(0xFFD32F2F) else Color(0xFF4A7C59),
+                        shape = CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(
+                        id = if (isRecording) R.drawable.stopaudio else R.drawable.mic_svgrepo_com
+                    ),
+                    contentDescription = if (isRecording) "Stop" else "Record",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
 
         Spacer(modifier = Modifier.width(12.dp))
 
+        // Waveform
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(32.dp)
+                .weight(1f)
+                .height(30.dp)
         ) {
             Canvas(modifier = Modifier.fillMaxSize()) {
-                val barWidth = size.width / (audioWaveformData.size * 2)
+                val barWidth = 3.dp.toPx()
+                val gap = 2.dp.toPx()
+                val totalWidth = barWidth + gap
+
                 audioWaveformData.forEachIndexed { index, amplitude ->
-                    drawRect(
-                        color = Color(0xFF2196F3),
-                        topLeft = Offset(
-                            index * barWidth * 2,
-                            size.height / 2 - amplitude * size.height / 2
-                        ),
-                        size = Size(barWidth, amplitude * size.height)
-                    )
+                    val x = index * totalWidth
+                    if (x + barWidth <= size.width) {
+                        val barHeight = (amplitude * size.height).coerceAtLeast(4.dp.toPx())
+                        drawRoundRect(
+                            color = if (isRecording) Color(0xFFD32F2F) else Color(0xFF9E9E9E),
+                            topLeft = Offset(x, (size.height - barHeight) / 2),
+                            size = Size(barWidth, barHeight),
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(4f, 4f)
+                        )
+                    }
                 }
             }
         }
