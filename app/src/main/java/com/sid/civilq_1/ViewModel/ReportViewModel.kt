@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.sid.civilq_1.model.Report
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -12,39 +13,43 @@ import kotlinx.coroutines.launch
 
 class ReportViewModel : ViewModel() {
 
-    // 1. User Profile State (For "Hello $name")
+    // ADDED: UI Ready state to prevent navigation jank
+    private val _isUiReady = MutableStateFlow(false)
+    val isUiReady: StateFlow<Boolean> = _isUiReady.asStateFlow()
+
     private val _userName = MutableStateFlow("Citizen")
     val userName: StateFlow<String> = _userName.asStateFlow()
 
-    // 2. Reports State
     private val _reports = MutableStateFlow(initialReportData)
     val reports: StateFlow<List<Report>> = _reports.asStateFlow()
 
-    // 3. Audio Recording State
     private val _recordedAudioUri = MutableStateFlow<Uri?>(null)
     val recordedAudioUri: StateFlow<Uri?> = _recordedAudioUri.asStateFlow()
 
     init {
         fetchUserProfile()
+        // Automatically trigger UI ready after a small delay
+        triggerUiReady()
     }
 
-    /**
-     * Fetches the display name from Firebase Auth.
-     * To reduce overloading, this is called once during initialization.
-     */
+    private fun triggerUiReady() {
+        viewModelScope.launch {
+            // Delay allows the Navigation transition (slide animation) to finish
+            // before the heavy list starts rendering.
+            delay(400)
+            _isUiReady.value = true
+        }
+    }
+
     private fun fetchUserProfile() {
         viewModelScope.launch {
             val user = FirebaseAuth.getInstance().currentUser
             user?.let {
-                // If displayName is null, it defaults to "Citizen"
                 _userName.value = it.displayName ?: "Citizen"
             }
         }
     }
 
-    /**
-     * Updates upvotes efficiently using copy() to trigger recomposition only for the specific item.
-     */
     fun upvoteReport(id: Int) {
         _reports.value = _reports.value.map { report ->
             if (report.id == id) report.copy(upvotes = report.upvotes + 1)
@@ -53,7 +58,6 @@ class ReportViewModel : ViewModel() {
     }
 
     fun addReport(report: Report) {
-        // Appends new report to the existing list
         _reports.value = (listOf(report) + _reports.value)
     }
 
@@ -66,10 +70,7 @@ class ReportViewModel : ViewModel() {
     }
 }
 
-/**
- * Static Data moved outside the class to keep the ViewModel clean
- * and prevent memory overhead during object initialization.
- */
+// Static Data
 private val initialReportData = listOf(
     Report(
         id = 21,
@@ -123,13 +124,12 @@ private val initialReportData = listOf(
         workerPhone = "9876541230"
     ),
     Report(
-
         id = 29,
         title = "Waterlogging Near Central Park",
         status = "Solved",
         category = "Roads",
         upvotes = 15,
-        description = "Heavy rains have caused waterlogging near Central Park, making it difficult for vehicles and pedestrians to pass.",
+        description = "Heavy rains have caused waterlogging near Central Park...",
         location = "Central Park, Jaipur",
         latitude = 26.904779,
         longitude = 75.810177,
@@ -139,16 +139,14 @@ private val initialReportData = listOf(
         departmentHeadName = "Mr. Ajay Singh",
         workerName = "Vikram Mehta",
         workerPhone = "9988776655"
-
     ),
     Report(
-
         id = 27,
         title = "Overflowing Garbage Bins on MG Road",
         status = "Solved",
         category = "Sanitation",
         upvotes = 8,
-        description = "Residents complain that garbage bins along MG Road have not been emptied for over a week, causing foul smell and unhygienic conditions.",
+        description = "Residents complain that garbage bins along MG Road...",
         location = "MG Road, Bangalore",
         latitude = 12.974831,
         longitude = 77.60935,
@@ -158,7 +156,5 @@ private val initialReportData = listOf(
         departmentHeadName = "Ms. Priya Reddy",
         workerName = "Karthik",
         workerPhone = "9871234560"
-
-    ),
-
+    )
 )

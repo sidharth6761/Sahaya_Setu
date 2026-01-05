@@ -3,51 +3,54 @@ package com.sid.civilq_1.screens
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
-import android.media.MediaRecorder
-import android.net.Uri
+import android.content.pm.PackageManager
 import android.location.Geocoder
 import android.location.Location
+import android.media.MediaPlayer
+import android.media.MediaRecorder
+import android.net.Uri
+import android.os.Build
 import android.os.Looper
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import coil.compose.AsyncImage
-import com.sid.civilq_1.R
+import com.google.android.gms.location.*
+import com.sid.civilq_1.ai.GeminiHelper
 import com.sid.civilq_1.components.VoiceNoteBar
 import com.sid.civilq_1.model.Report
 import com.sid.civilq_1.viewmodel.ReportViewModel
-import com.google.android.gms.location.*
-import com.sid.civilq_1.ai.GeminiHelper
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -72,144 +75,198 @@ data class ReportFormState(
 @Composable
 fun ReportScreen(
     navController: NavHostController,
-    reportViewModel: ReportViewModel = viewModel()
+    reportViewModel: ReportViewModel
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val geminiHelper = remember { GeminiHelper() }
+    val isUiReady by reportViewModel.isUiReady.collectAsStateWithLifecycle()
 
     // UI States
     var formState by remember { mutableStateOf(ReportFormState()) }
     var isGeneratingDescription by remember { mutableStateOf(false) }
     var isSubmitting by remember { mutableStateOf(false) }
 
-    // Hardware Controllers
+    // Hardware Controllers (Initialized only when needed)
     val fusedClient = remember { LocationServices.getFusedLocationProviderClient(context) }
     var mediaRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
+    var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
     var audioFile by remember { mutableStateOf<File?>(null) }
 
-    // PERFORMANCE: Cleanup hardware resources on exit
-    DisposableEffect(Unit) {
-        onDispose {
-            mediaRecorder?.apply {
-                try { stop() } catch (e: Exception) {}
-                release()
-            }
-        }
-    }
+    val animatedWaveformData = remember { mutableStateListOf<Float>().apply { addAll(List(40) { 0.2f }) } }
 
-    // Launchers
-    val imagePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) {
-            uri -> formState = formState.copy(imageUri = uri)
-    }
-
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { perms ->
+    // Permission Launchers
+    val locationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { perms ->
         if (perms.values.any { it }) {
             getCurrentLocationOptimized(fusedClient) { loc ->
-                scope.launch {
-                    val address = getAddressFromLocationOptimized(context, loc)
-                    formState = formState.copy(location = address)
-                }
+                scope.launch { formState = formState.copy(location = getAddressFromLocationOptimized(context, loc)) }
             }
         }
     }
 
-    LaunchedEffect(Unit) {
-        locationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+    val audioPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+        if (!isGranted) Toast.makeText(context, "Microphone permission required", Toast.LENGTH_SHORT).show()
     }
 
-    Scaffold(
-        bottomBar = {
-            Box(modifier = Modifier.padding(16.dp).navigationBarsPadding()) {
-                Button(
-                    onClick = {
-                        if (!isSubmitting) {
-                            isSubmitting = true
-                            scope.launch {
-                                submitReportLogic(context, formState, reportViewModel)
-                                isSubmitting = false
-                                navController.popBackStack()
-                            }
-                        }
-                    },
-                    enabled = formState.title.isNotBlank() && formState.category.isNotBlank() && !isSubmitting,
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                    shape = RoundedCornerShape(16.dp)
+    val imagePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        formState = formState.copy(imageUri = uri)
+    }
+
+    // Effect: Delay hardware request until UI transition finishes
+    LaunchedEffect(isUiReady) {
+        if ( isUiReady ) {
+            locationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+        }
+    }
+
+    Scaffold(containerColor = BACKGROUND_COLOR) { innerPadding ->
+        Crossfade(targetState = isUiReady, label = "ReportScreenFade") { ready ->
+            if (!ready) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = Color(0xFF4A7C59))
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(innerPadding),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(20.dp)
                 ) {
-                    if (isSubmitting) {
-                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                    } else {
-                        Text("Submit Report", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    item { HeaderSection() }
+
+                    item {
+                        MediaCard(
+                            formState = formState,
+                            waveformData = animatedWaveformData,
+                            onImageClick = { imagePickerLauncher.launch("image/*") },
+                            onMicClick = {
+                                val hasAudioPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                                if (!hasAudioPerm) {
+                                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                } else {
+                                    handleRecording(context, formState, { mediaRecorder = it }, { audioFile = it }) { newState ->
+                                        formState = newState
+                                    }
+                                }
+                            },
+                            onPlayClick = {
+                                playAudio(context, formState.recordedAudioUri) { mediaPlayer = it }
+                            }
+                        )
+                    }
+
+                    item {
+                        FormCard(
+                            formState = formState,
+                            isGeneratingDescription = isGeneratingDescription,
+                            onTitleChange = { formState = formState.copy(title = it) },
+                            onCategoryChange = { formState = formState.copy(category = it) },
+                            onDescriptionChange = { formState = formState.copy(description = it) },
+                            onGenerateAI = {
+                                if (formState.imageUri != null) {
+                                    scope.launch {
+                                        isGeneratingDescription = true
+                                        GeminiHelper().generateReportDescription(
+                                            context, formState.imageUri!!, formState.category, formState.title, Location("")
+                                        ).onSuccess { formState = formState.copy(description = it) }
+                                        isGeneratingDescription = false
+                                    }
+                                }
+                            }
+                        )
+                    }
+
+                    item {
+                        Button(
+                            onClick = {
+                                if (!isSubmitting) {
+                                    isSubmitting = true
+                                    scope.launch {
+                                        submitReportLogic(context, formState, reportViewModel)
+                                        isSubmitting = false
+                                        navController.popBackStack()
+                                    }
+                                }
+                            },
+                            enabled = formState.title.isNotBlank() && formState.category.isNotBlank() && !isSubmitting,
+                            modifier = Modifier.fillMaxWidth().height(56.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A7C59))
+                        ) {
+                            if (isSubmitting) CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
+                            else Text("Submit Report", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(modifier = Modifier.height(100.dp))
                     }
                 }
             }
-        }
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(BACKGROUND_COLOR)
-                .padding(innerPadding)
-                .padding(horizontal = 16.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
-        ) {
-            Spacer(modifier = Modifier.height(8.dp))
-            HeaderSection()
-
-            FormCard(
-                formState = formState,
-                isGeneratingDescription = isGeneratingDescription,
-                onTitleChange = { formState = formState.copy(title = it) },
-                onCategoryChange = { formState = formState.copy(category = it) },
-                onDescriptionChange = { formState = formState.copy(description = it) },
-                onGenerateAI = {
-                    if (formState.imageUri != null) {
-                        scope.launch {
-                            isGeneratingDescription = true
-                            geminiHelper.generateReportDescription(context, formState.imageUri!!, formState.category, formState.title, Location("").apply { latitude = 0.0; longitude = 0.0 })
-                                .onSuccess { formState = formState.copy(description = it) }
-                            isGeneratingDescription = false
-                        }
-                    }
-                }
-            )
-
-            MediaCard(
-                formState = formState,
-                onImageClick = { imagePickerLauncher.launch("image/*") },
-                onMicClick = {
-                    if (!formState.isRecording) {
-                        audioFile = File(context.cacheDir, "rec_${System.currentTimeMillis()}.mp3")
-                        mediaRecorder = MediaRecorder().apply {
-                            setAudioSource(MediaRecorder.AudioSource.MIC)
-                            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                            setOutputFile(audioFile!!.absolutePath)
-                            prepare()
-                            start()
-                        }
-                        formState = formState.copy(isRecording = true)
-                    } else {
-                        mediaRecorder?.apply { stop(); release() }
-                        mediaRecorder = null
-                        formState = formState.copy(isRecording = false, recordedAudioUri = audioFile?.toUri())
-                    }
-                }
-            )
-            Spacer(modifier = Modifier.height(20.dp))
         }
     }
 }
 
-// Logic separation to reduce UI overloading
+// Optimized Recording Logic
+private fun handleRecording(
+    context: Context,
+    state: ReportFormState,
+    setRecorder: (MediaRecorder?) -> Unit,
+    setFile: (File?) -> Unit,
+    onStateChange: (ReportFormState) -> Unit
+) {
+    if (!state.isRecording) {
+        try {
+            val file = File(context.cacheDir, "rec_${System.currentTimeMillis()}.mp4")
+            setFile(file)
+            val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(context) else MediaRecorder()
+            recorder.apply {
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                setOutputFile(file.absolutePath)
+                prepare()
+                start()
+            }
+            setRecorder(recorder)
+            onStateChange(state.copy(isRecording = true))
+        } catch (e: Exception) {
+            Toast.makeText(context, "Mic Busy", Toast.LENGTH_SHORT).show()
+        }
+    } else {
+        // Stop logic
+        onStateChange(state.copy(isRecording = false))
+    }
+}
+
+private fun playAudio(context: Context, uri: Uri?, setPlayer: (MediaPlayer?) -> Unit) {
+    uri?.let {
+        val mp = MediaPlayer().apply {
+            setDataSource(context, it)
+            prepare()
+            start()
+        }
+        setPlayer(mp)
+    }
+}
+
+@Composable
+private fun MediaCard(formState: ReportFormState, waveformData: List<Float>, onImageClick: () -> Unit, onMicClick: () -> Unit, onPlayClick: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = CARD_SHAPE, colors = CardDefaults.cardColors(containerColor = Color.White)) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text("Attachments", fontWeight = FontWeight.Bold)
+            Surface(modifier = Modifier.fillMaxWidth().height(120.dp).clickable { onImageClick() }, shape = FIELD_SHAPE, color = Color(0xFFF1F3F4)) {
+                if (formState.imageUri != null) {
+                    AsyncImage(model = formState.imageUri, contentDescription = null, contentScale = ContentScale.Crop)
+                } else {
+                    Icon(Icons.Outlined.Add, null, modifier = Modifier.size(32.dp), tint = Color.Gray)
+                }
+            }
+            VoiceNoteBar(isRecording = formState.isRecording, onMicClick = onMicClick, audioWaveformData = waveformData)
+            if (formState.recordedAudioUri != null) {
+                Button(onClick = onPlayClick) { Text("Play Recording") }
+            }
+        }
+    }
+}
+
 private suspend fun submitReportLogic(context: Context, state: ReportFormState, viewModel: ReportViewModel) {
     withContext(Dispatchers.IO) {
-        val geocoder = Geocoder(context, Locale.getDefault())
-        val coords = try { geocoder.getFromLocationName(state.location, 1) } catch (e: Exception) { null }
-
         val report = Report(
             id = (0..999999).random(),
             title = state.title,
@@ -217,83 +274,37 @@ private suspend fun submitReportLogic(context: Context, state: ReportFormState, 
             status = "Active",
             description = state.description,
             location = state.location,
-            latitude = coords?.firstOrNull()?.latitude,
-            longitude = coords?.firstOrNull()?.longitude,
+            latitude = 0.0,
+            longitude = 0.0,
             imageUrl = state.imageUri?.toString() ?: "",
             audioUrl = state.recordedAudioUri?.toString() ?: "",
             timestamp = SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date()),
             upvotes = 0,
-            departmentHeadName = "not assigned",
-            workerName = "not assigned",
-            workerPhone = "not assigned"
+            departmentHeadName = "Pending",
+            workerName = "Unassigned",
+            workerPhone = ""
         )
         viewModel.addReport(report)
     }
 }
 
-@Composable
-private fun HeaderSection() {
+@Composable private fun HeaderSection() {
     Column {
-        Text("Create Report", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1A1C1E))
-        Text("Provide details to help authorities act faster", fontSize = 14.sp, color = Color.Gray)
+        Text("Create Report", fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        Text("Provide details to help authorities act faster", color = Color.Gray)
     }
 }
 
 @Composable
-private fun FormCard(
-    formState: ReportFormState,
-    isGeneratingDescription: Boolean,
-    onTitleChange: (String) -> Unit,
-    onCategoryChange: (String) -> Unit,
-    onDescriptionChange: (String) -> Unit,
-    onGenerateAI: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = CARD_SHAPE,
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
+private fun FormCard(formState: ReportFormState, isGeneratingDescription: Boolean, onTitleChange: (String) -> Unit, onCategoryChange: (String) -> Unit, onDescriptionChange: (String) -> Unit, onGenerateAI: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = CARD_SHAPE, colors = CardDefaults.cardColors(containerColor = Color.White)) {
         Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            OutlinedTextField(
-                value = formState.title,
-                onValueChange = onTitleChange,
-                label = { Text("Issue Title") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = FIELD_SHAPE
-            )
-
+            OutlinedTextField(value = formState.title, onValueChange = onTitleChange, label = { Text("Issue Title") }, modifier = Modifier.fillMaxWidth())
             DepartmentDropdown(formState.category, onCategoryChange)
-
-            OutlinedTextField(
-                value = formState.location,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("Location") },
-                trailingIcon = { Icon(Icons.Default.LocationOn, null, tint = Color.Red) },
-                modifier = Modifier.fillMaxWidth(),
-                shape = FIELD_SHAPE
-            )
-
-            Box {
-                OutlinedTextField(
-                    value = formState.description,
-                    onValueChange = onDescriptionChange,
-                    label = { Text("Description") },
-                    modifier = Modifier.fillMaxWidth().height(150.dp),
-                    shape = FIELD_SHAPE,
-                    placeholder = { Text("AI can help you write this...") }
-                )
-                if (formState.imageUri != null) {
-                    TextButton(
-                        onClick = onGenerateAI,
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp),
-                        enabled = !isGeneratingDescription
-                    ) {
-                        if (isGeneratingDescription) CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                        else Text("✨ Generate with AI", fontWeight = FontWeight.Bold)
-                    }
-                }
+            OutlinedTextField(value = formState.location, onValueChange = {}, readOnly = true, label = { Text("Location") }, trailingIcon = { Icon(Icons.Default.LocationOn, null, tint = Color.Red) }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = formState.description, onValueChange = onDescriptionChange, label = { Text("Description") }, modifier = Modifier.fillMaxWidth().height(120.dp))
+            if (formState.imageUri != null) {
+                Button(onClick = onGenerateAI, enabled = !isGeneratingDescription) { Text("✨ AI Describe") }
             }
         }
     }
@@ -304,64 +315,13 @@ private fun FormCard(
 private fun DepartmentDropdown(selected: String, onSelected: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-        OutlinedTextField(
-            value = selected.ifBlank { "Select Category" },
-            onValueChange = {},
-            readOnly = true,
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-            modifier = Modifier.menuAnchor().fillMaxWidth(),
-            shape = FIELD_SHAPE
-        )
+        OutlinedTextField(value = selected, onValueChange = {}, readOnly = true, label = {Text("Category")}, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, modifier = Modifier.menuAnchor().fillMaxWidth())
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DEPARTMENTS.forEach { dept ->
-                DropdownMenuItem(text = { Text(dept) }, onClick = { onSelected(dept); expanded = false })
-            }
+            DEPARTMENTS.forEach { dept -> DropdownMenuItem(text = { Text(dept) }, onClick = { onSelected(dept); expanded = false }) }
         }
     }
 }
 
-@Composable
-private fun MediaCard(formState: ReportFormState, onImageClick: () -> Unit, onMicClick: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = CARD_SHAPE,
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Attachments", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Surface(
-                    modifier = Modifier.weight(1f).height(100.dp).clickable { onImageClick() },
-                    shape = FIELD_SHAPE,
-                    color = Color(0xFFF1F3F4),
-                    border = BorderStroke(1.dp, Color.LightGray)
-                ) {
-                    if (formState.imageUri != null) {
-                        AsyncImage(model = formState.imageUri, contentDescription = null, modifier = Modifier.fillMaxSize())
-                    } else {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                            Icon(Icons.Outlined.Add, null)
-                            Text("Add Photo", fontSize = 12.sp)
-                        }
-                    }
-                }
-
-                Surface(
-                    modifier = Modifier.weight(1f).height(100.dp),
-                    shape = FIELD_SHAPE,
-                    color = if (formState.isRecording) Color(0xFFFFEBEE) else Color(0xFFF1F3F4),
-                    border = BorderStroke(1.dp, if (formState.isRecording) Color.Red else Color.LightGray)
-                ) {
-                    VoiceNoteBar(isRecording = formState.isRecording, onMicClick = onMicClick, audioWaveformData = List(20){ 0.5f })
-                }
-            }
-        }
-    }
-}
-
-// Optimized Location helpers
 @SuppressLint("MissingPermission")
 private fun getCurrentLocationOptimized(fusedClient: FusedLocationProviderClient, onLocation: (Location) -> Unit) {
     fusedClient.lastLocation.addOnSuccessListener { loc ->

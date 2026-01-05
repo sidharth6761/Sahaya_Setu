@@ -22,14 +22,14 @@ import androidx.navigation.NavHostController
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-// Standardized Data Class
+// 1. Standardized Data Class (Simplified)
 data class ChatMessage(
     val text: String,
     val isUser: Boolean,
     val timestamp: Long = System.currentTimeMillis()
 )
 
-// Static Initial Conversation
+// 2. Static Initial Conversation
 private val INITIAL_MESSAGES = listOf(
     ChatMessage("Hi there! I'm your Civic Assistant. 👋", false),
     ChatMessage("I can help you understand how to report issues or check your current status. How can I help?", false)
@@ -38,14 +38,17 @@ private val INITIAL_MESSAGES = listOf(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(navController: NavHostController) {
+    // State management
     var messages by remember { mutableStateOf(INITIAL_MESSAGES) }
     var currentMessage by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
-    // PERFORMANCE: Auto-scroll only when messages change
+    // PERFORMANCE: Use a delay before scrolling to prevent frame skipping
+    // during the initial screen transition.
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
+            delay(50) // Small buffer for the UI to breathe
             listState.animateScrollToItem(messages.size - 1)
         }
     }
@@ -72,11 +75,14 @@ fun ChatScreen(navController: NavHostController) {
             // Message List
             LazyColumn(
                 state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(items = messages, key = { it.timestamp }) { message ->
+                // FIXED: Removed 'key' parameter to prevent duplicate key crashes
+                items(items = messages) { message ->
                     MessageBubble(message)
                 }
             }
@@ -84,11 +90,14 @@ fun ChatScreen(navController: NavHostController) {
             // Input Area
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                tonalElevation = 4.dp,
+                tonalElevation = 8.dp, // Increased for better separation
                 color = Color.White
             ) {
                 Row(
-                    modifier = Modifier.padding(16.dp).navigationBarsPadding(),
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .navigationBarsPadding()
+                        .imePadding(), // Ensure keyboard doesn't cover input
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     OutlinedTextField(
@@ -97,7 +106,11 @@ fun ChatScreen(navController: NavHostController) {
                         placeholder = { Text("Ask something...") },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(24.dp),
-                        maxLines = 3
+                        maxLines = 3,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF6200EE),
+                            unfocusedBorderColor = Color.LightGray
+                        )
                     )
 
                     Spacer(modifier = Modifier.width(8.dp))
@@ -105,14 +118,15 @@ fun ChatScreen(navController: NavHostController) {
                     FloatingActionButton(
                         onClick = {
                             if (currentMessage.isNotBlank()) {
-                                val userMsg = ChatMessage(currentMessage, true)
-                                val responseText = generateCivicBotResponse(currentMessage)
+                                val userText = currentMessage
+                                val userMsg = ChatMessage(userText, true)
                                 messages = messages + userMsg
                                 currentMessage = ""
 
-                                // Fake "typing" delay for better UX
+                                // Fake "typing" delay
                                 scope.launch {
-                                    delay(600)
+                                    delay(1000)
+                                    val responseText = generateCivicBotResponse(userText)
                                     messages = messages + ChatMessage(responseText, false)
                                 }
                             }
@@ -122,7 +136,11 @@ fun ChatScreen(navController: NavHostController) {
                         shape = CircleShape,
                         modifier = Modifier.size(48.dp)
                     ) {
-                        Icon(Icons.Default.Send, contentDescription = "Send", modifier = Modifier.size(20.dp))
+                        Icon(
+                            imageVector = Icons.Default.Send,
+                            contentDescription = "Send",
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
             }
@@ -133,13 +151,19 @@ fun ChatScreen(navController: NavHostController) {
 @Composable
 fun MessageBubble(message: ChatMessage) {
     val isUser = message.isUser
+
+    // OPTIMIZATION: Remember the painter so it doesn't reload on every scroll/recompose
+    val botIcon = if (!isUser) painterResource(id = com.sid.civilq_1.R.drawable.chatbot) else null
+
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp), // Added padding to reduce layout shifts
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
-        if (!isUser) {
+        if (!isUser && botIcon != null) {
             Icon(
-                painter = painterResource(id = com.sid.civilq_1.R.drawable.chatbot),
+                painter = botIcon,
                 contentDescription = null,
                 modifier = Modifier.size(24.dp).padding(top = 4.dp),
                 tint = Color(0xFF6200EE)
@@ -148,12 +172,8 @@ fun MessageBubble(message: ChatMessage) {
         }
 
         Card(
-            shape = RoundedCornerShape(
-                topStart = 16.dp,
-                topEnd = 16.dp,
-                bottomStart = if (isUser) 16.dp else 0.dp,
-                bottomEnd = if (isUser) 0.dp else 16.dp
-            ),
+            // Use static shapes to prevent recalculating paths
+            shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(
                 containerColor = if (isUser) Color(0xFF6200EE) else Color(0xFFE9E9EB)
             ),

@@ -2,22 +2,30 @@ package com.sid.civilq_1.ai
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.ImageDecoder
+import android.graphics.BitmapFactory
 import android.location.Location
 import android.net.Uri
-import android.os.Build
-import android.provider.MediaStore
 import com.google.ai.client.generativeai.GenerativeModel
 import com.google.ai.client.generativeai.type.content
+import com.google.ai.client.generativeai.type.generationConfig
 import com.sid.civilq_1.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.InputStream
 
 class GeminiHelper {
 
+    private val config = generationConfig {
+        temperature = 0.4f
+        topK = 32
+        topP = 1f
+        maxOutputTokens = 150
+    }
+
     private val generativeModel = GenerativeModel(
-        modelName = "gemini-2.5-flash",
-        apiKey = BuildConfig.GEMINI_API_KEY
+        modelName = "gemini-2.5-flash-lite", // Use stable model naming
+        apiKey = BuildConfig.GEMINI_API_KEY,
+        generationConfig = config
     )
 
     suspend fun generateReportDescription(
@@ -28,23 +36,20 @@ class GeminiHelper {
         location: Location
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
-            // Check if the API key is missing. This is the most common cause of errors.
-            if (BuildConfig.GEMINI_API_KEY.isBlank() ) {
-                return@withContext Result.failure(Exception("API Key is missing. Please add it to your local.properties file."))
+            if (BuildConfig.GEMINI_API_KEY.isBlank() || BuildConfig.GEMINI_API_KEY == "null") {
+                return@withContext Result.failure(Exception("API Key missing"))
             }
 
-            val imageBitmap = uriToBitmap(context, imageUri)
+            val imageBitmap = getDownscaledBitmap(context, imageUri)
+                ?: return@withContext Result.failure(Exception("Image processing failed"))
 
             val prompt = """
-            You are an expert civic issue reporter. Based on the attached image, the report title, and the selected department and the selected location, generate a concise and clear description for a formal complaint in the local language used in their state .
-            - The description should be between 30 to 50 words.
-            
-            - Department: $department
-            - Title: $title
-            - Location: Latitude ${location.latitude}, Longitude ${location.longitude}
-            
-            Focus on describing the problem visible in the image objectively. Do not add any conversational text or greetings. Just provide the description.
-            """
+                Describe this civic issue for a formal complaint.
+                Title: $title
+                Dept: $department
+                Language: Use the local language for coordinates ${location.latitude}, ${location.longitude}.
+                Constraint: 30-50 words. Objective tone. No greetings.
+            """.trimIndent()
 
             val inputContent = content {
                 image(imageBitmap)
@@ -52,26 +57,44 @@ class GeminiHelper {
             }
 
             val response = generativeModel.generateContent(inputContent)
+            val resultText = response.text
 
-            if (response.text != null) {
-                Result.success(response.text!!)
+            if (!resultText.isNullOrBlank()) {
+                Result.success(resultText)
             } else {
-                Result.failure(Exception("The AI returned an empty response."))
+                Result.failure(Exception("AI returned no text"))
             }
 
         } catch (e: Exception) {
-            // Provide a more detailed error message to help with debugging
-            Result.failure(Exception( "${e.message}", e))
+            Result.failure(e)
         }
     }
 
-    private fun uriToBitmap(context: Context, uri: Uri): Bitmap {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            val source = ImageDecoder.createSource(context.contentResolver, uri)
-            ImageDecoder.decodeBitmap(source)
-        } else {
-            @Suppress("DEPRECATION")
-            MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
+    private fun getDownscaledBitmap(context: Context, uri: Uri): Bitmap? {
+        return try {
+            val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeStream(inputStream, null, options)
+            inputStream?.close()
+
+            val targetSize = 1024
+            var inSampleSize = 1
+            if (options.outHeight > targetSize || options.outWidth > targetSize) {
+                val halfHeight = options.outHeight / 2
+                val halfWidth = options.outWidth / 2
+                while (halfHeight / inSampleSize >= targetSize && halfWidth / inSampleSize >= targetSize) {
+                    inSampleSize *= 2
+                }
+            }
+
+            val finalStream = context.contentResolver.openInputStream(uri)
+            val finalOptions = BitmapFactory.Options().apply { this.inSampleSize = inSampleSize }
+            val bitmap = BitmapFactory.decodeStream(finalStream, null, finalOptions)
+            finalStream?.close()
+
+            bitmap
+        } catch (e: Exception) {
+            null
         }
     }
 }

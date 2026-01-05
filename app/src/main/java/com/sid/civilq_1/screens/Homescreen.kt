@@ -71,7 +71,7 @@ fun HomeScreen(
             FloatingActionButton(
                 onClick = { navController.navigate("chat") },
                 modifier = Modifier
-                    .padding(bottom = 16.dp)
+                    .padding(bottom = 66.dp)
                     .size(56.dp),
                 containerColor = Color(0xFF6200EE),
                 contentColor = Color.White,
