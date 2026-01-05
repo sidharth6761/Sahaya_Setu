@@ -41,7 +41,7 @@ fun BottomNavBar(navController: NavHostController) {
             .height(95.dp)
             .padding(horizontal = 50.dp, vertical = 20.dp), // Moved padding here ,
         shape = RoundedCornerShape(32.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+        colors = CardDefaults.cardColors(containerColor = Color.White) //transparent
     ) {
         Box(
             modifier = Modifier
@@ -50,11 +50,12 @@ fun BottomNavBar(navController: NavHostController) {
                 .background(
                     brush = Brush.verticalGradient(
                         colors = listOf(
-                            Color.Red.copy(alpha = 0.6f),
+                            Color.Blue.copy(alpha = 0.6f),
                             Color.Magenta.copy(alpha = 0.5f)
                         )
                     ),
                     shape = RoundedCornerShape(32.dp)
+
                 )
         ) {
             // Inner glow effect

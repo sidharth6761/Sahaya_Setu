@@ -1,14 +1,17 @@
-package com.sid.civilq_1.ui.screens
+package com.sid.civilq_1.screens
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Context
 import android.media.MediaRecorder
 import android.net.Uri
 import android.location.Geocoder
 import android.location.Location
 import android.os.Looper
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -38,24 +41,23 @@ import com.sid.civilq_1.components.VoiceNoteBar
 import com.sid.civilq_1.model.Report
 import com.sid.civilq_1.viewmodel.ReportViewModel
 import com.google.android.gms.location.*
+import com.sid.civilq_1.ai.GeminiHelper
+import kotlinx.coroutines.launch
 import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
 
-// ✅ ULTRA PERFORMANCE: Precompute all static data
+// Precomputed static data for performance
 private val DEPARTMENTS = listOf(
     "Fire", "Road", "Potholes", "Sanitation", "Traffic",
     "Administration", "Urban Planning", "Water Supply", "Electricity", "Others"
 )
-
-// ✅ ULTRA PERFORMANCE: Precompute colors and shapes
 private val BACKGROUND_COLOR = Color(0xFFF0F0F0)
 private val CARD_SHAPE = RoundedCornerShape(16.dp)
 private val FIELD_SHAPE = RoundedCornerShape(12.dp)
-private val BUTTON_SHAPE = RoundedCornerShape(16.dp)
 
-// ✅ ULTRA PERFORMANCE: Data class for form state to reduce recompositions
+// Data class for form state to reduce recompositions
 @Stable
 data class ReportFormState(
     val title: String = "",
@@ -74,19 +76,54 @@ fun ReportScreen(
     navController: NavHostController,
     reportViewModel: ReportViewModel = viewModel()
 ) {
-    // ✅ ULTRA PERFORMANCE: Single state object to minimize recompositions
-    var formState by remember { mutableStateOf(ReportFormState()) }
-
+    var isGeneratingDescription by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     val context = LocalContext.current
+
+    // ✅ FIXED: GeminiHelper no longer needs the API key passed in its constructor.
+    // It now securely gets the key from BuildConfig.
+    val geminiHelper = remember { GeminiHelper() }
+
+    var formState by remember { mutableStateOf(ReportFormState()) }
     val fusedClient = remember { LocationServices.getFusedLocationProviderClient(context) }
 
-    // ✅ ULTRA PERFORMANCE: Memoize expensive operations
     val scrollState = rememberScrollState()
     val waveformData = remember { mutableStateListOf<Float>().apply { repeat(20) { add(0.5f) } } }
     var mediaRecorder: MediaRecorder? by remember { mutableStateOf(null) }
-    var audioFile: File? by remember { mutableStateOf<File?>(null) }
+    var audioFile: File? by remember { mutableStateOf(null) }
 
-    // ✅ ULTRA PERFORMANCE: Optimized permission handling
+    val onGenerateDescription = { 
+        if (formState.imageUri != null && formState.category.isNotBlank()) {
+            scope.launch {
+                isGeneratingDescription = true
+                geminiHelper.generateReportDescription(
+                    context = context,
+                    imageUri = formState.imageUri!!,
+                    department = formState.category,
+                    title = formState.title,
+                    location = Location("").apply {
+                        val geo = Geocoder(context, Locale.getDefault())
+                        val coords = try {
+                            geo.getFromLocationName(formState.location, 1)
+                        } catch (e: IOException) {
+                            null
+                        }
+                        val lat = coords?.firstOrNull()?.latitude ?: 0.0
+                        val lon = coords?.firstOrNull()?.longitude ?: 0.0
+                        latitude = lat
+                        longitude = lon
+                    }
+                ).onSuccess { description ->
+                    formState = formState.copy(description = description)
+                    isGeneratingDescription = false
+                }.onFailure { error ->
+                    Toast.makeText(context, "AI failed: ${error.message}", Toast.LENGTH_LONG).show()
+                    isGeneratingDescription = false
+                }
+            }
+        }
+    }
+
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { perms ->
@@ -107,7 +144,6 @@ fun ReportScreen(
         formState = formState.copy(imageUri = uri)
     }
 
-    // ✅ ULTRA PERFORMANCE: Launch location request only once
     LaunchedEffect(Unit) {
         locationPermissionLauncher.launch(
             arrayOf(
@@ -117,71 +153,69 @@ fun ReportScreen(
         )
     }
 
-    // ✅ ULTRA PERFORMANCE: Memoized callbacks
-    val onSubmitClick = remember {
-        {
-            if (formState.title.isNotBlank() && formState.category.isNotBlank()) {
-                val geo = Geocoder(context, Locale.getDefault())
-                val coords = geo.getFromLocationName(formState.location, 1)
-                val lat = coords?.firstOrNull()?.latitude
-                val lon = coords?.firstOrNull()?.longitude
-
-                val newReport = Report(
-                    id = (0..1000).random(),
-                    title = formState.title,
-                    category = formState.category,
-                    status = "Active",
-                    description = formState.description,
-                    location = formState.location,
-                    latitude = lat,
-                    longitude = lon,
-                    imageUrl = formState.imageUri?.toString() ?: "",
-                    audioUrl = formState.recordedAudioUri?.toString() ?: "",
-                    upvotes = 0,
-                    timestamp = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault()).format(Date()),
-                    departmentHeadName = "Not Assigned",
-                    workerName = "Not Assigned",
-                    workerPhone = "N/A"
-                )
-
-                reportViewModel.addReport(newReport)
-                navController.popBackStack()
+    val onSubmitClick = {
+        if (formState.title.isNotBlank() && formState.category.isNotBlank()) {
+            val geo = Geocoder(context, Locale.getDefault())
+            val coords = try {
+                geo.getFromLocationName(formState.location, 1)
+            } catch (e: IOException) {
+                null
             }
+            val lat = coords?.firstOrNull()?.latitude
+            val lon = coords?.firstOrNull()?.longitude
+
+            val newReport = Report(
+                id = (0..1000).random(), // Use a better ID generation in a real app
+                title = formState.title,
+                category = formState.category,
+                status = "Active",
+                description = formState.description,
+                location = formState.location,
+                latitude = lat,
+                longitude = lon,
+                imageUrl = formState.imageUri?.toString() ?: "",
+                audioUrl = formState.recordedAudioUri?.toString() ?: "",
+                upvotes = 0,
+                timestamp = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault()).format(Date()),
+                departmentHeadName = "Not Assigned",
+                workerName = "Not Assigned",
+                workerPhone = "N/A"
+            )
+
+            reportViewModel.addReport(newReport)
+            navController.popBackStack()
         }
     }
 
-    val onMicClick = remember {
-        {
-            if (!formState.isRecording) {
-                audioFile = File(context.cacheDir, "report_audio_${System.currentTimeMillis()}.mp3")
-                mediaRecorder = MediaRecorder().apply {
-                    setAudioSource(MediaRecorder.AudioSource.MIC)
-                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                    setOutputFile(audioFile!!.absolutePath)
-                    try {
-                        prepare()
-                        start()
-                        formState = formState.copy(isRecording = true)
-                    } catch (e: IOException) {
-                        e.printStackTrace()
-                    }
+    val onMicClick = {
+        if (!formState.isRecording) {
+            audioFile = File(context.cacheDir, "report_audio_${System.currentTimeMillis()}.mp3")
+            mediaRecorder = MediaRecorder().apply {
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                setOutputFile(audioFile!!.absolutePath)
+                try {
+                    prepare()
+                    start()
+                    formState = formState.copy(isRecording = true)
+                } catch (e: IOException) {
+                    e.printStackTrace()
                 }
-            } else {
-                mediaRecorder?.apply {
-                    stop()
-                    release()
-                }
-                mediaRecorder = null
-                formState = formState.copy(
-                    isRecording = false,
-                    recordedAudioUri = audioFile?.toUri()
-                )
             }
+        } else {
+            mediaRecorder?.apply {
+                stop()
+                release()
+            }
+            mediaRecorder = null
+            formState = formState.copy(
+                isRecording = false,
+                recordedAudioUri = audioFile?.toUri()
+            )
         }
     }
 
-    // ✅ ULTRA PERFORMANCE: Simplified layout with Box instead of complex nesting
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -195,18 +229,17 @@ fun ReportScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            // ✅ Optimized Header
             HeaderCard()
 
-            // ✅ Optimized Form Card
             FormCard(
                 formState = formState,
+                isGeneratingDescription = isGeneratingDescription,
                 onTitleChange = { formState = formState.copy(title = it) },
                 onCategoryChange = { formState = formState.copy(category = it) },
-                onDescriptionChange = { formState = formState.copy(description = it) }
+                onDescriptionChange = { formState = formState.copy(description = it) },
+                onGenerateDescription = onGenerateDescription
             )
 
-            // ✅ Optimized Media Card
             MediaCard(
                 formState = formState,
                 onImageClick = { imagePickerLauncher.launch("image/*") },
@@ -214,7 +247,6 @@ fun ReportScreen(
                 waveformData = waveformData
             )
 
-            // ✅ Optimized Submit Button
             SubmitButton(
                 enabled = formState.title.isNotBlank() && formState.category.isNotBlank(),
                 onClick = onSubmitClick
@@ -234,9 +266,7 @@ private fun HeaderCard() {
             .height(70.dp)
             .shadow(4.dp, CARD_SHAPE),
         shape = CARD_SHAPE,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primary
-        )
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary)
     ) {
         Column(
             modifier = Modifier.padding(start = 14.dp, top = 8.dp),
@@ -260,24 +290,23 @@ private fun HeaderCard() {
 @Composable
 private fun FormCard(
     formState: ReportFormState,
+    isGeneratingDescription: Boolean,
     onTitleChange: (String) -> Unit,
     onCategoryChange: (String) -> Unit,
-    onDescriptionChange: (String) -> Unit
+    onDescriptionChange: (String) -> Unit,
+    onGenerateDescription: () -> Unit
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .shadow(6.dp, CARD_SHAPE),
         shape = CARD_SHAPE,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(
             modifier = Modifier.padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            // ✅ Optimized form fields with reusable components
             FormField(
                 icon = Icons.Outlined.Edit,
                 label = "Report Title",
@@ -307,7 +336,7 @@ private fun FormCard(
             FormField(
                 icon = Icons.Outlined.LocationOn,
                 label = "Location",
-                content = {
+                content = { 
                     OutlinedTextField(
                         value = formState.location,
                         onValueChange = {},
@@ -330,267 +359,49 @@ private fun FormCard(
                 icon = Icons.Outlined.Info,
                 label = "Description",
                 content = {
-                    OutlinedTextField(
-                        value = formState.description,
-                        onValueChange = onDescriptionChange,
-                        placeholder = { Text("Describe the issue in detail...") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(120.dp),
-                        maxLines = 5,
-                        shape = FIELD_SHAPE,
-                        colors = optimizedTextFieldColors()
-                    )
+                    Column {
+                        OutlinedTextField(
+                            value = formState.description,
+                            onValueChange = onDescriptionChange,
+                            placeholder = {
+                                Text(
+                                    if (isGeneratingDescription) "AI is generating description..."
+                                    else "Describe the issue in detail..."
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth().height(120.dp),
+                            maxLines = 5,
+                            shape = FIELD_SHAPE,
+                            colors = optimizedTextFieldColors(),
+                            enabled = !isGeneratingDescription,
+                            trailingIcon = {
+                                if (isGeneratingDescription) {
+                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                }
+                            }
+                        )
+
+                        if (formState.imageUri != null && formState.category.isNotBlank()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                TextButton(
+                                    onClick = onGenerateDescription,
+                                    enabled = !isGeneratingDescription
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Star, // ✅ FIXED: Using a valid Material Icon
+                                        contentDescription = "AI Generate",
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Generate with AI")
+                                }
+                            }
+                        }
+                    }
                 }
-            )
-        }
-    }
-}
-
-@Composable
-private fun MediaCard(
-    formState: ReportFormState,
-    onImageClick: () -> Unit,
-    onMicClick: () -> Unit,
-    waveformData: MutableList<Float>
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .shadow(6.dp, CARD_SHAPE),
-        shape = CARD_SHAPE,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            SectionHeader(
-                icon = Icons.Outlined.Add,
-                title = "Attachments"
-            )
-
-            // ✅ Optimized image upload
-            ImageUploadCard(
-                hasImage = formState.imageUri != null,
-                onClick = onImageClick
-            )
-
-            // ✅ Image preview
-            formState.imageUri?.let { uri ->
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(180.dp),
-                    shape = FIELD_SHAPE
-                ) {
-                    AsyncImage(
-                        model = uri,
-                        contentDescription = "Selected Image",
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-            }
-
-            // ✅ Optimized voice note section
-            VoiceNoteSection(
-                isRecording = formState.isRecording,
-                hasRecording = formState.recordedAudioUri != null,
-                onMicClick = onMicClick,
-                waveformData = waveformData
-            )
-        }
-    }
-}
-
-@Composable
-private fun FormField(
-    icon: ImageVector,
-    label: String,
-    content: @Composable () -> Unit
-) {
-    Column {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp)
-            )
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-        Spacer(modifier = Modifier.height(8.dp))
-        content()
-    }
-}
-
-@Composable
-private fun SectionHeader(icon: ImageVector, title: String) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(20.dp)
-        )
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold
-        )
-    }
-}
-
-@Composable
-private fun ImageUploadCard(hasImage: Boolean, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = FIELD_SHAPE,
-        colors = CardDefaults.cardColors(
-            containerColor = if (hasImage)
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-            else
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-        ),
-        border = androidx.compose.foundation.BorderStroke(
-            2.dp,
-            if (hasImage) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.CheckCircle,
-                contentDescription = null,
-                tint = if (hasImage) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                modifier = Modifier.size(24.dp)
-            )
-            Text(
-                text = if (hasImage) "Photo Selected" else "Add Photo",
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (hasImage) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurface,
-                fontWeight = if (hasImage) FontWeight.Medium else FontWeight.Normal
-            )
-        }
-    }
-}
-
-@Composable
-private fun VoiceNoteSection(
-    isRecording: Boolean,
-    hasRecording: Boolean,
-    onMicClick: () -> Unit,
-    waveformData: MutableList<Float>
-) {
-    Column {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.mic_svgrepo_com),
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp)
-            )
-            Text(
-                text = "Voice Note",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-        Spacer(modifier = Modifier.height(8.dp))
-
-        VoiceNoteBar(
-            isRecording = isRecording,
-            onMicClick = onMicClick,
-            audioWaveformData = waveformData
-        )
-
-        if (hasRecording) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                ),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.CheckCircle,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Text(
-                        text = "Audio recorded successfully",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SubmitButton(enabled: Boolean, onClick: () -> Unit) {
-    Button(
-        onClick = onClick,
-        modifier = Modifier
-            .padding(bottom = 48.dp)
-            .fillMaxWidth()
-            .height(56.dp)
-            .shadow(4.dp, RoundedCornerShape(16.dp)),
-        shape = RoundedCornerShape(16.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = MaterialTheme.colorScheme.primary
-        )
-    ) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.Send,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp)
-            )
-            Text(
-                text = "Submit Report",
-                style = MaterialTheme.typography.titleMedium.copy(
-                    fontWeight = FontWeight.SemiBold
-                )
             )
         }
     }
@@ -609,27 +420,23 @@ private fun DepartmentDropdownOptimized(
         onExpandedChange = { expanded = !expanded }
     ) {
         OutlinedTextField(
-            value = selectedCategory,
+            value = selectedCategory.ifBlank { "Select a department" },
             onValueChange = {},
             readOnly = true,
-            placeholder = { Text("Select Department") },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier
-                .menuAnchor()
-                .fillMaxWidth(),
+            modifier = Modifier.menuAnchor().fillMaxWidth(),
             shape = FIELD_SHAPE,
             colors = optimizedTextFieldColors()
         )
-
         ExposedDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false }
         ) {
-            DEPARTMENTS.forEach { department ->
+            DEPARTMENTS.forEach { category ->
                 DropdownMenuItem(
-                    text = { Text(department) },
+                    text = { Text(category) },
                     onClick = {
-                        onCategorySelected(department)
+                        onCategorySelected(category)
                         expanded = false
                     }
                 )
@@ -638,19 +445,159 @@ private fun DepartmentDropdownOptimized(
     }
 }
 
-// ✅ ULTRA PERFORMANCE: Memoized text field colors
 @Composable
-private fun optimizedTextFieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor = MaterialTheme.colorScheme.primary,
-    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
-)
+private fun optimizedTextFieldColors(): TextFieldColors {
+    return OutlinedTextFieldDefaults.colors(
+        focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
+        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+     
+    )
+}
 
-// ✅ ULTRA PERFORMANCE: Optimized location functions
-@SuppressLint("MissingPermission")
-private fun getCurrentLocationOptimized(
-    fusedClient: FusedLocationProviderClient,
-    onLocation: (Location) -> Unit
+@Composable
+private fun MediaCard(
+    formState: ReportFormState,
+    onImageClick: () -> Unit,
+    onMicClick: () -> Unit,
+    waveformData: List<Float>
 ) {
+    Card(
+        modifier = Modifier.fillMaxWidth().shadow(6.dp, CARD_SHAPE),
+        shape = CARD_SHAPE,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(
+            modifier = Modifier.padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            SectionHeader(icon = Icons.Outlined.Add, title = "Attachments")
+            ImageUploadCard(hasImage = formState.imageUri != null, onClick = onImageClick)
+
+            formState.imageUri?.let {
+                Card(modifier = Modifier.fillMaxWidth().height(180.dp), shape = FIELD_SHAPE) {
+                    AsyncImage(
+                        model = it,
+                        contentDescription = "Selected Image",
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+
+            VoiceNoteSection(
+                isRecording = formState.isRecording,
+                hasRecording = formState.recordedAudioUri != null,
+                onMicClick = onMicClick,
+                waveformData = waveformData
+            )
+        }
+    }
+}
+
+@Composable
+private fun FormField(icon: ImageVector, label: String, content: @Composable () -> Unit) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp)
+            )
+            Text(text = label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        content()
+    }
+}
+
+@Composable
+private fun SectionHeader(icon: ImageVector, title: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp)
+        )
+        Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun ImageUploadCard(hasImage: Boolean, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = FIELD_SHAPE,
+        colors = CardDefaults.cardColors(
+            containerColor = if (hasImage) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        ),
+        border = BorderStroke(
+            2.dp,
+            if (hasImage) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.CheckCircle,
+                contentDescription = null,
+                tint = if (hasImage) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                modifier = Modifier.size(24.dp)
+            )
+            Text(
+                text = if (hasImage) "Photo Selected" else "Add Photo",
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (hasImage) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                fontWeight = if (hasImage) FontWeight.Medium else FontWeight.Normal
+            )
+        }
+    }
+}
+
+@Composable
+private fun VoiceNoteSection(
+    isRecording: Boolean,
+    hasRecording: Boolean,
+    onMicClick: () -> Unit,
+    waveformData: List<Float>
+) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(
+                painter = painterResource(R.drawable.mic_svgrepo_com),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp)
+            )
+            Text(text = "Voice Note", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        VoiceNoteBar(
+            isRecording = isRecording, onMicClick = onMicClick,
+            audioWaveformData = waveformData,
+        )
+    }
+}
+
+@Composable
+private fun SubmitButton(enabled: Boolean, onClick: () -> Unit) {
+    Button(
+        onClick = onClick, 
+        enabled = enabled, 
+        modifier = Modifier.fillMaxWidth().height(56.dp),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Text("Submit Report")
+    }
+}
+
+@SuppressLint("MissingPermission")
+private fun getCurrentLocationOptimized(fusedClient: FusedLocationProviderClient, onLocation: (Location) -> Unit) {
     fusedClient.lastLocation.addOnSuccessListener { location ->
         if (location != null) {
             onLocation(location)
@@ -661,34 +608,23 @@ private fun getCurrentLocationOptimized(
                 fastestInterval = 5000
                 numUpdates = 1
             }
-            fusedClient.requestLocationUpdates(
-                request,
-                object : LocationCallback() {
-                    override fun onLocationResult(result: LocationResult) {
-                        result.locations.firstOrNull()?.let(onLocation)
-                        fusedClient.removeLocationUpdates(this)
-                    }
-                },
-                Looper.getMainLooper()
-            )
+            val locationCallback = object : LocationCallback() {
+                override fun onLocationResult(result: LocationResult) {
+                    result.locations.firstOrNull()?.let(onLocation)
+                    fusedClient.removeLocationUpdates(this)
+                }
+            }
+            fusedClient.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
         }
     }
 }
 
-private fun getAddressFromLocationOptimized(context: android.content.Context, location: Location): String {
+private fun getAddressFromLocationOptimized(context: Context, location: Location): String {
+    val geocoder = Geocoder(context, Locale.getDefault())
     return try {
-        val geocoder = Geocoder(context, Locale.getDefault())
         val addresses = geocoder.getFromLocation(location.latitude, location.longitude, 1)
-        if (!addresses.isNullOrEmpty()) {
-            val address = addresses[0]
-            listOfNotNull(
-                address.featureName,
-                address.thoroughfare,
-                address.locality,
-                address.adminArea
-            ).take(3).joinToString(", ") // ✅ Limit address length for performance
-        } else "Unknown location"
-    } catch (e: Exception) {
-        "Unknown location"
+        addresses?.firstOrNull()?.getAddressLine(0) ?: "Lat: ${location.latitude}, Lng: ${location.longitude}"
+    } catch (e: IOException) {
+        "Location not found"
     }
 }

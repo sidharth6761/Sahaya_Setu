@@ -1,12 +1,12 @@
 package com.sid.civilq_1.Navigation
 
 import androidx.compose.animation.*
-import androidx.compose.animation.core.spring
+
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
+
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -18,14 +18,13 @@ import androidx.navigation.navArgument
 import androidx.navigation.NavType
 import androidx.navigation.compose.currentBackStackEntryAsState
 import com.google.firebase.auth.FirebaseAuth
-import com.sid.civilq_1.components.BottomNavBar
 import com.sid.civilq_1.screens.ChatScreen
 import com.sid.civilq_1.screens.ProfileScreen
 import com.sid.civilq_1.screens.ReportDetailScreen
 import com.sid.civilq_1.screens.LoginScreen
 import com.sid.civilq_1.screens.SignUpScreen
 import com.sid.civilq_1.ui.screens.HomeScreen
-import com.sid.civilq_1.ui.screens.ReportScreen
+import com.sid.civilq_1.screens.ReportScreen
 import com.sid.civilq_1.viewmodel.ReportViewModel
 
 @Composable
