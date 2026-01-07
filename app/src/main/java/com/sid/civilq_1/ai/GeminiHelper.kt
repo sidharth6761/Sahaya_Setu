@@ -23,7 +23,7 @@ class GeminiHelper {
     }
 
     private val generativeModel = GenerativeModel(
-        modelName = "gemini-2.5-flash-lite", // Use stable model naming
+        modelName = "gemini-1.5-flash", // Use stable model naming
         apiKey = BuildConfig.GEMINI_API_KEY,
         generationConfig = config
     )
