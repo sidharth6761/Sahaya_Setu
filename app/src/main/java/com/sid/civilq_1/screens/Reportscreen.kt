@@ -304,7 +304,10 @@ private fun FormCard(formState: ReportFormState, isGeneratingDescription: Boolea
             OutlinedTextField(value = formState.location, onValueChange = {}, readOnly = true, label = { Text("Location") }, trailingIcon = { Icon(Icons.Default.LocationOn, null, tint = Color.Red) }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(value = formState.description, onValueChange = onDescriptionChange, label = { Text("Description") }, modifier = Modifier.fillMaxWidth().height(120.dp))
             if (formState.imageUri != null) {
-                Button(onClick = onGenerateAI, enabled = !isGeneratingDescription) { Text("✨ AI Describe") }
+                Button(
+                    onClick = onGenerateAI,
+                    enabled = !isGeneratingDescription
+                ) { Text("✨ AI Describe") }
             }
         }
     }
