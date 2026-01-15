@@ -116,7 +116,7 @@ fun LoginScreen(navController: NavHostController) {
                 elevation = ButtonDefaults.buttonElevation(0.dp)
             ) {
                 Icon(
-                    painter = painterResource(id = R.drawable.google_icon), // Ensure you have a google icon
+                    painter = painterResource(id = R.drawable.google_icon),
                     contentDescription = null,
                     tint = Color.Unspecified,
                     modifier = Modifier.size(20.dp)

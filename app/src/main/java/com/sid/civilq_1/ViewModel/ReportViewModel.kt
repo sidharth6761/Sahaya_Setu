@@ -1,10 +1,16 @@
 package com.sid.civilq_1.viewmodel
 
+import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
+import com.sid.civilq_1.SupabaseModule.kt.SupabaseClient
 import com.sid.civilq_1.model.Report
+import io.github.jan.supabase.postgrest.from
+import io.github.jan.supabase.postgrest.query.Order
+import io.github.jan.supabase.storage.storage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -13,14 +19,13 @@ import kotlinx.coroutines.launch
 
 class ReportViewModel : ViewModel() {
 
-    // ADDED: UI Ready state to prevent navigation jank
     private val _isUiReady = MutableStateFlow(false)
     val isUiReady: StateFlow<Boolean> = _isUiReady.asStateFlow()
 
     private val _userName = MutableStateFlow("Citizen")
     val userName: StateFlow<String> = _userName.asStateFlow()
 
-    private val _reports = MutableStateFlow(initialReportData)
+    private val _reports = MutableStateFlow<List<Report>>(emptyList())
     val reports: StateFlow<List<Report>> = _reports.asStateFlow()
 
     private val _recordedAudioUri = MutableStateFlow<Uri?>(null)
@@ -28,38 +33,131 @@ class ReportViewModel : ViewModel() {
 
     init {
         fetchUserProfile()
-        // Automatically trigger UI ready after a small delay
+        fetchReportsFromSupabase()
         triggerUiReady()
     }
 
     private fun triggerUiReady() {
         viewModelScope.launch {
-            // Delay allows the Navigation transition (slide animation) to finish
-            // before the heavy list starts rendering.
             delay(400)
             _isUiReady.value = true
         }
     }
 
-    private fun fetchUserProfile() {
+    /**
+     * Dynamically fetches user profile name from Firebase Auth.
+     */
+    fun fetchUserProfile() {
         viewModelScope.launch {
             val user = FirebaseAuth.getInstance().currentUser
             user?.let {
-                _userName.value = it.displayName ?: "Citizen"
+                // Fetch the name; fallback to email or "Citizen" if displayName is empty
+                val name = it.displayName ?: it.email?.substringBefore("@") ?: "Citizen"
+                _userName.value = name
+                Log.d("Auth", "Active User: $name (UID: ${it.uid})")
             }
         }
     }
 
-    fun upvoteReport(id: Int) {
-        _reports.value = _reports.value.map { report ->
-            if (report.id == id) report.copy(upvotes = report.upvotes + 1)
-            else report
+    // --- SUPABASE INTEGRATION ---
+
+    /**
+     * Fetches all rows from 'issues' sorted by UPVOTES (Highest first).
+     */
+    fun fetchReportsFromSupabase() {
+        viewModelScope.launch {
+            try {
+                val result = SupabaseClient.client.from("issues")
+                    .select {
+                        // LIVE SORTING: Sort by upvotes (Descending), then newest (Descending)
+                        order("upvotes", order = Order.DESCENDING)
+                        order("created_at", order = Order.DESCENDING)
+                    }
+                    .decodeList<Report>()
+
+                _reports.value = result
+                Log.d("Supabase", "Successfully fetched ${result.size} reports sorted by votes")
+            } catch (e: Exception) {
+                Log.e("SupabaseError", "Fetch failed: ${e.message}")
+            }
         }
     }
 
-    fun addReport(report: Report) {
-        _reports.value = (listOf(report) + _reports.value)
+    /**
+     * Uploads image to Storage, then inserts record with Firebase UID.
+     */
+    fun addReport(context: Context, report: Report, imageUri: Uri?) {
+        val firebaseUser = FirebaseAuth.getInstance().currentUser
+
+        viewModelScope.launch {
+            try {
+                var finalImageUrl: String? = null
+
+                // 1. Upload file to Storage bucket
+                imageUri?.let { uri ->
+                    val fileName = "report_${System.currentTimeMillis()}.jpg"
+                    val bucket = SupabaseClient.client.storage.from("report-image")
+
+                    val inputStream = context.contentResolver.openInputStream(uri)
+                    val bytes = inputStream?.readBytes() ?: return@let
+
+                    bucket.upload("reports/$fileName", bytes)
+                    finalImageUrl = bucket.publicUrl("reports/$fileName")
+                }
+
+                // 2. Prepare final report object
+                val reportWithMetaData = report.copy(
+                    userId = firebaseUser?.uid,
+                    imageUrl = finalImageUrl ?: report.imageUrl
+                )
+
+                // 3. Insert into database
+                SupabaseClient.client.from("issues").insert(reportWithMetaData)
+                Log.d("Supabase", "Report inserted successfully")
+
+                fetchReportsFromSupabase()
+            } catch (e: Exception) {
+                Log.e("SupabaseError", "Submission failed: ${e.message}")
+            }
+        }
     }
+
+    /**
+     * Updates upvote count with Optimistic UI update for instant feedback.
+     */
+    fun upvoteReport(reportId: String) {
+        viewModelScope.launch {
+            try {
+                // 1. Local Optimistic Update (Immediate UI change)
+                val currentList = _reports.value.toMutableList()
+                val index = currentList.indexOfFirst { it.id == reportId }
+
+                if (index != -1) {
+                    val report = currentList[index]
+                    val updatedUpvotes = (report.upvotes ?: 0) + 1
+
+                    // Update the list locally and re-sort so the item moves up
+                    currentList[index] = report.copy(upvotes = updatedUpvotes)
+                    _reports.value = currentList.sortedByDescending { it.upvotes }
+
+                    // 2. Database Update (Sync in background)
+                    SupabaseClient.client.from("issues").update(
+                        mapOf("upvotes" to updatedUpvotes)
+                    ) {
+                        filter { eq("id", reportId) }
+                    }
+
+                    Log.d("Supabase", "Upvote successful and synced for ID: $reportId")
+                }
+            } catch (e: Exception) {
+                Log.e("SupabaseError", "Upvote sync failed: ${e.message}")
+                // If DB update fails, fetch fresh data to correct the UI
+                fetchReportsFromSupabase()
+            }
+        }
+    }
+
+    // --- AUDIO HANDLING ---
 
     fun setRecordedAudio(uri: Uri) {
         _recordedAudioUri.value = uri
@@ -69,92 +167,3 @@ class ReportViewModel : ViewModel() {
         _recordedAudioUri.value = null
     }
 }
-
-// Static Data
-private val initialReportData = listOf(
-    Report(
-        id = 21,
-        title = "Garbage Uncollected for 10 Days in Vepery",
-        status = "Active",
-        category = "Sanitation",
-        upvotes = 15,
-        description = "Residents of Arian Lane in Vepery have reported that garbage has remained uncollected for over 10 days...",
-        location = "Vepery, Chennai",
-        latitude = 13.0853,
-        longitude = 80.2591,
-        imageUrl = "https://images.hindustantimes.com/rf/image_size_640x362/HT/p2/2016/06/17/Pictures/ghaziabad-wednesday-kaushambi-ghaziabad-hindustan-garbage-dumps_25ada0cc-3462-11e6-b762-306eb096a216.jpg",
-        audioUrl = "https://example.com/vepery_garbage_audio.mp3",
-        timestamp = "4:45 PM, 20th June 2024",
-        departmentHeadName = "Mr. R. Sharma",
-        workerName = "Suresh Kumar",
-        workerPhone = "9876543210"
-    ),
-    Report(
-        id = 30,
-        title = "Unauthorized Construction in Riverside Area",
-        status = "Active",
-        category = "Urban Planning",
-        upvotes = 3,
-        description = "Citizens report unauthorized construction activity near the riverside...",
-        location = "Riverside Area, Pune",
-        latitude = 18.52043,
-        longitude = 73.85674,
-        imageUrl = "https://5.imimg.com/data5/HL/DF/GO/ANDROID-109871693/product-jpeg-500x500.jpeg",
-        audioUrl = "https://example.com/riverside_construction_audio.mp3",
-        timestamp = "2025-09-18T09:45:00Z",
-        departmentHeadName = "Ms. Anita Desai",
-        workerName = "Rohan Patil",
-        workerPhone = "9123456780"
-    ),
-    Report(
-        id = 22,
-        title = "Potholes on 5th Main Road, Anna Nagar",
-        status = "Active",
-        category = "Road Maintenance",
-        upvotes = 30,
-        description = "Several large potholes have developed on 5th Main Road in Anna Nagar...",
-        location = "Anna Nagar, Chennai",
-        latitude = 13.081736,
-        longitude = 80.211362,
-        imageUrl = "https://th-i.thgim.com/public/incoming/b61z12/article67480497.ece/alternates/FREE_1200/Anna%20Nagar%205th%20Avenue1.jpg",
-        audioUrl = "https://example.com/anna_nagar_potholes_audio.mp3",
-        timestamp = "10:15 AM, 18th June 2024",
-        departmentHeadName = "Mr. S. Ramesh",
-        workerName = "Manoj",
-        workerPhone = "9876541230"
-    ),
-    Report(
-        id = 29,
-        title = "Waterlogging Near Central Park",
-        status = "Solved",
-        category = "Roads",
-        upvotes = 15,
-        description = "Heavy rains have caused waterlogging near Central Park...",
-        location = "Central Park, Jaipur",
-        latitude = 26.904779,
-        longitude = 75.810177,
-        imageUrl = "https://images.hindustantimes.com/img/2022/07/06/1600x900/69064976-fd6c-11ec-8171-8e816335ea07_1657140365046.jpg",
-        audioUrl = "https://example.com/central_park_waterlogging_audio.mp3",
-        timestamp = "2025-09-18T08:00:00Z",
-        departmentHeadName = "Mr. Ajay Singh",
-        workerName = "Vikram Mehta",
-        workerPhone = "9988776655"
-    ),
-    Report(
-        id = 27,
-        title = "Overflowing Garbage Bins on MG Road",
-        status = "Solved",
-        category = "Sanitation",
-        upvotes = 8,
-        description = "Residents complain that garbage bins along MG Road...",
-        location = "MG Road, Bangalore",
-        latitude = 12.974831,
-        longitude = 77.60935,
-        imageUrl = "https://static.toiimg.com/thumb/resizemode-4,width-1280,height-720,msid-121710513/121710513.jpg",
-        audioUrl = "https://example.com/mg_road_garbage_audio.mp3",
-        timestamp = "2025-09-18T06:30:00Z",
-        departmentHeadName = "Ms. Priya Reddy",
-        workerName = "Karthik",
-        workerPhone = "9871234560"
-    )
-)

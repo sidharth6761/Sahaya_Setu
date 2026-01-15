@@ -7,10 +7,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.google.gms.google.services)
     id("kotlin-parcelize")
-//    id("org.jetbrains.kotlin.plugin.serialization") version "1.9.23"
-
-        kotlin("plugin.serialization") version "1.9.23"
-
+    id("org.jetbrains.kotlin.plugin.serialization") version "1.9.23"
 }
 
 // Read the local properties file to get the API key
@@ -67,7 +64,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
-    implementation("io.ktor:ktor-client-[engine]:3.0.0-rc-1 ")
+
     // --- Jetpack Compose (BOM keeps versions consistent) ---
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
@@ -111,7 +108,7 @@ dependencies {
     implementation("com.google.accompanist:accompanist-permissions:0.34.0")
 
     // --- Generative AI ---
-    implementation("com.google.ai.client.generativeai:generativeai:0.8.0")
+    implementation("com.google.ai.client.generativeai:generativeai:0.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 
     // --- Testing ---
@@ -121,14 +118,17 @@ dependencies {
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
 
+    // --- Supabase ---
+    implementation("io.github.jan-tennert.supabase:postgrest-kt:2.5.0")
+    implementation("io.github.jan-tennert.supabase:gotrue-kt:2.5.0")
+    implementation("io.github.jan-tennert.supabase:realtime-kt:2.5.0")
+    implementation("io.github.jan-tennert.supabase:storage-kt:2.5.0")
 
-    //databse--
-    implementation(platform("io.github.jan-tennert.supabase:bom:3.3.0"))
-    implementation("io.github.jan-tennert.supabase:postgrest-kt")
-    implementation("io.github.jan-tennert.supabase:auth-kt")
-    implementation("io.github.jan-tennert.supabase:realtime-kt")
+    // Ktor (Required for Supabase to communicate)
+    implementation("io.ktor:ktor-client-core:2.3.0")
+    implementation("io.ktor:ktor-client-android:2.3.0")
 
-
-
-// Use latest version
+    // Serialization
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
 }
+

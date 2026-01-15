@@ -2,13 +2,16 @@ package com.sid.civilq_1.ui.screens
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -24,128 +27,153 @@ import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
+import com.google.firebase.auth.FirebaseAuth
+import com.sid.civilq_1.R
 import com.sid.civilq_1.model.Report
 import com.sid.civilq_1.viewmodel.ReportViewModel
 import com.sid.civilq_1.components.getUserLocation
 
-// Constants
+// Branding Colors
 val ActiveColor = Color(0xFF4A90E2)
 val SolvedColor = Color(0xFF50E3C2)
 val TabBackground = Color(0xFFE0E0E0)
+val BackgroundGray = Color(0xFFF0F0F0)
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     navController: NavHostController,
     reportViewModel: ReportViewModel = viewModel()
 ) {
     val reports by reportViewModel.reports.collectAsStateWithLifecycle()
+    val userName by reportViewModel.userName.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
-    // State for location
-    var mainAddress by remember { mutableStateOf("Fetching your area...") }
-    var exactAddress by remember { mutableStateOf("Fetching exact address...") }
+    // Firebase Auth for user-specific filtering
+    val currentUserId = remember { FirebaseAuth.getInstance().currentUser?.uid }
+
+    // UI State
+    var isRefreshing by remember { mutableStateOf(false) }
+    var mainAddress by remember { mutableStateOf("Fetching area...") }
+    var exactAddress by remember { mutableStateOf("Fetching address...") }
     var selectedTab by remember { mutableStateOf("Active") }
 
-    // Fetch location once
+    // Initial Data Fetch
     LaunchedEffect(Unit) {
+        reportViewModel.fetchReportsFromSupabase()
+        reportViewModel.fetchUserProfile() // Refresh user name on launch
         getUserLocation(context) { main, exact ->
             mainAddress = main
             exactAddress = exact
         }
     }
 
-    // PERFORMANCE FIX: Only filter/sort when 'reports' or 'selectedTab' actually changes
-    val filteredReports by remember(reports, selectedTab) {
-        derivedStateOf {
-            reports.filter { it.status == selectedTab }
-                .sortedByDescending { it.upvotes }
+    // Filtered list based on selected tab
+    // The sorting logic (highest upvotes) is handled inside the ViewModel
+    val filteredReports = remember(reports, selectedTab) {
+        when (selectedTab) {
+            "Active" -> reports.filter { it.status.equals("Active", ignoreCase = true) }
+            "Reports" -> reports.filter { it.userId == currentUserId }
+            else -> reports
         }
     }
 
-    // PERFORMANCE FIX: Calculate stats only when 'reports' list changes
-    val activeCount by remember(reports) { derivedStateOf { reports.count { it.status == "Active" } } }
-    val solvedCount by remember(reports) { derivedStateOf { reports.count { it.status == "Solved" } } }
-
     Scaffold(
+        modifier = Modifier.fillMaxSize(),
         floatingActionButton = {
             FloatingActionButton(
                 onClick = { navController.navigate("chat") },
-                modifier = Modifier
-                    .padding(bottom = 66.dp)
-                    .size(56.dp),
                 containerColor = Color(0xFF6200EE),
                 contentColor = Color.White,
-                shape = RoundedCornerShape(46.dp),
-                elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 8.dp)
+                shape = RoundedCornerShape(16.dp)
             ) {
                 Icon(
-                    painter = painterResource(id = com.sid.civilq_1.R.drawable.chatbot),
+                    painter = painterResource(id = R.drawable.chatbot),
                     contentDescription = "Chat",
                     modifier = Modifier.size(24.dp)
                 )
             }
-        },
-        floatingActionButtonPosition = FabPosition.Start
-    ) { paddingValues ->
-        // PERFORMANCE FIX: LazyColumn only renders what is visible on screen
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xFFF0F0F0))
-                .padding(paddingValues)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+        }
+    ) { innerPadding ->
+
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                isRefreshing = true
+                reportViewModel.fetchReportsFromSupabase()
+                // The ViewModel update will push new data to 'reports',
+                // we set isRefreshing to false once the logic completes
+                isRefreshing = false
+            },
+            modifier = Modifier.padding(innerPadding)
         ) {
-            // Header Section
-            item {
-                Column(modifier = Modifier.padding(top = 40.dp)) {
-                    Text(
-                        text = "Hello, Active Citizen! 👋",
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color.DarkGray
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(BackgroundGray)
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                contentPadding = PaddingValues(top = 24.dp, bottom = 100.dp)
+            ) {
+                // 1. Welcome Header
+                item {
+                    Column {
+                        Text("Hello, $userName! 👋", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
+                        Text("📍 $mainAddress", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        Text(exactAddress, fontSize = 12.sp, color = Color.Gray)
+                    }
+                }
+
+                // 2. Emergency Section
+                item { EmergencyContactButton() }
+
+                // 3. Status Statistics
+                item {
+                    val activeCount = reports.count { it.status.equals("Active", ignoreCase = true) }
+                    ReportStatsRow(active = activeCount, total = reports.size)
+                }
+
+                // 4. Navigation Tabs
+                item {
+                    SegmentedTab(
+                        tabs = listOf("Active", "Reports"),
+                        selectedTab = selectedTab,
+                        onTabSelected = { selectedTab = it }
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(text = "📍 $mainAddress", fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                    Text(text = exactAddress, fontSize = 12.sp, color = Color.Gray)
+                }
+
+                // 5. Section Title
+                item {
+                    Text("$selectedTab Issues", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                }
+
+                // 6. Conditional List View
+                if (filteredReports.isEmpty()) {
+                    item {
+                        Box(Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+                            Text("No items found in $selectedTab", color = Color.Gray)
+                        }
+                    }
+                } else {
+                    items(
+                        items = filteredReports,
+                        // Using report ID as the key is essential for smooth sorting animations
+                        key = { it.id ?: it.hashCode().toString() }
+                    ) { report ->
+                        ReportItemCard(
+                            report = report,
+                            onUpvote = {
+                                report.id?.let { reportViewModel.upvoteReport(it) }
+                            },
+                            onClick = {
+                                navController.navigate("reportdetails/${report.id}")
+                            },
+                            // Only show upvote button on the public "Active" tab
+                            showUpvote = selectedTab == "Active"
+                        )
+                    }
                 }
             }
-
-            // Quick Actions
-            item { EmergencyContactButton() }
-
-            // Stats
-            item { ReportStatsRow(active = activeCount, solved = solvedCount) }
-
-            // Tab Selector
-            item {
-                SegmentedTab(
-                    tabs = listOf("Active", "Solved"),
-                    selectedTab = selectedTab,
-                    onTabSelected = { selectedTab = it }
-                )
-            }
-
-            item {
-                Text(
-                    text = "$selectedTab Reports Nearby",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            // The Dynamic List
-            items(items = filteredReports, key = { it.id }) { report ->
-                ReportItemCard(
-                    report = report,
-                    onUpvote = { reportViewModel.upvoteReport(report.id) },
-                    onClick = { navController.navigate("reportdetails/${report.id}") },
-                    showUpvote = (selectedTab == "Active")
-                )
-            }
-
-            // Bottom Spacing for FAB
-            item { Spacer(modifier = Modifier.height(80.dp)) }
         }
     }
 }
@@ -155,9 +183,10 @@ fun SegmentedTab(tabs: List<String>, selectedTab: String, onTabSelected: (String
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(44.dp)
-            .clip(RoundedCornerShape(22.dp))
+            .height(52.dp)
+            .clip(RoundedCornerShape(26.dp))
             .background(TabBackground)
+            .padding(4.dp)
     ) {
         tabs.forEach { tab ->
             val isSelected = tab == selectedTab
@@ -180,31 +209,56 @@ fun SegmentedTab(tabs: List<String>, selectedTab: String, onTabSelected: (String
     }
 }
 
-@SuppressLint("UseKtx")
 @Composable
-fun EmergencyContactButton() {
-    val context = LocalContext.current
-    Button(
-        onClick = {
-            val intent = Intent(Intent.ACTION_DIAL).apply { data = "tel:112".toUri() }
-            context.startActivity(intent)
-        },
-        colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
-        shape = RoundedCornerShape(16.dp),
+fun ReportItemCard(report: Report, onUpvote: () -> Unit, onClick: () -> Unit, showUpvote: Boolean) {
+    Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(70.dp)
-            .shadow(4.dp, RoundedCornerShape(16.dp))
+            .clickable { onClick() },
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Text("Emergency Contacts", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Status Dot: Uses branding colors
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(if (report.status.equals("Active", ignoreCase = true)) ActiveColor else SolvedColor)
+            )
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(report.title, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                Text("${report.category} • ${report.status.uppercase()}", fontSize = 12.sp, color = Color.Gray)
+            }
+
+            // Upvote logic: Integrated with ViewModel optimistic updates
+            if (showUpvote && report.status.equals("Active", ignoreCase = true)) {
+                OutlinedButton(
+                    onClick = { onUpvote() },
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.height(38.dp),
+                    border = BorderStroke(1.dp, ActiveColor),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ActiveColor)
+                ) {
+                    Text("👍 ${report.upvotes}", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
     }
 }
 
 @Composable
-fun ReportStatsRow(active: Int, solved: Int) {
+fun ReportStatsRow(active: Int, total: Int) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        StatBox("Active", active, ActiveColor, Modifier.weight(1f))
-        StatBox("Solved", solved, SolvedColor, Modifier.weight(1f))
+        StatBox("Active Issues", active, ActiveColor, Modifier.weight(1f))
+        StatBox("Total Submissions", total, Color(0xFF9C27B0), Modifier.weight(1f))
     }
 }
 
@@ -221,45 +275,33 @@ fun StatBox(label: String, count: Int, color: Color, modifier: Modifier = Modifi
             verticalArrangement = Arrangement.Center
         ) {
             Text(count.toString(), fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color.White)
-            Text(label, fontSize = 12.sp, color = Color.White)
+            Text(label, fontSize = 12.sp, color = Color.White.copy(alpha = 0.8f))
         }
     }
 }
 
+@SuppressLint("UseKtx")
 @Composable
-fun ReportItemCard(report: Report, onUpvote: () -> Unit, onClick: () -> Unit, showUpvote: Boolean) {
-    Card(
+fun EmergencyContactButton() {
+    val context = LocalContext.current
+    Button(
+        onClick = {
+            val intent = Intent(Intent.ACTION_DIAL).apply { data = "tel:112".toUri() }
+            context.startActivity(intent)
+        },
+        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935)),
+        shape = RoundedCornerShape(16.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() },
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            .height(64.dp)
+            .shadow(4.dp, RoundedCornerShape(16.dp))
     ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(12.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(if (report.status == "Active") ActiveColor else SolvedColor)
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(report.title, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                Text("${report.category} • ${report.status}", fontSize = 12.sp, color = Color.Gray)
-            }
-            if (showUpvote) {
-                Button(
-                    onClick = onUpvote,
-                    shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp)
-                ) {
-                    Text("👍 ${report.upvotes}")
-                }
-            }
-        }
+        Icon(
+            painter = painterResource(id = R.drawable.mic_svgrepo_com),
+            contentDescription = null,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(Modifier.width(8.dp))
+        Text("Emergency Contacts (112)", fontSize = 18.sp, fontWeight = FontWeight.Bold)
     }
 }

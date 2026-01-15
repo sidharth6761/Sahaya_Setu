@@ -24,12 +24,14 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewModelScope
 import androidx.navigation.NavHostController
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions.DEFAULT_SIGN_IN
-import com.google.firebase.Firebase
-import com.google.firebase.auth.auth
+import com.google.firebase.auth.FirebaseAuth
+
 import com.sid.civilq_1.R
+import kotlinx.coroutines.launch
 
 
 @Composable
@@ -193,15 +195,22 @@ fun ProfileDetailRow(icon: androidx.compose.ui.graphics.vector.ImageVector, info
     }
 }
 
-fun signout(context: Context,  onComplete:()->Unit) {
-    Firebase.auth.signOut()
+fun signout(context: Context, onComplete: () -> Unit) {
+    // Sign out from Firebase
+    try {
+        FirebaseAuth.getInstance().signOut()
 
-    val googleSignInOptions = GoogleSignInOptions.Builder( DEFAULT_SIGN_IN)
-        .requestIdToken("290279683385-81erbnvb3shb4op63rl26cc2vl5272tb.apps.googleusercontent.com")
-        .requestEmail()
-        .build()
-    val googleSignInClient =
-        com.google.android.gms.auth.api.signin.GoogleSignIn.getClient(context, googleSignInOptions)
-    googleSignInClient.signOut().addOnCompleteListener {
+        // Also sign out from Google if it was a Google sign-in
+        val googleSignInOptions = GoogleSignInOptions.Builder(DEFAULT_SIGN_IN)
+            .requestIdToken("290279683385-81erbnvb3shb4op63rl26cc2vl5272tb.apps.googleusercontent.com")
+            .requestEmail()
+            .build()
+        val googleSignInClient = com.google.android.gms.auth.api.signin.GoogleSignIn.getClient(context, googleSignInOptions)
+        googleSignInClient.signOut().addOnCompleteListener {
+            onComplete()
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
         onComplete()
-    }}
+    }
+}
