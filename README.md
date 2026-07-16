@@ -6,6 +6,15 @@ A digital platform empowering citizens to actively participate in maintaining ur
 
 Sahaya Setu bridges the gap between citizens and authorities through community-driven civic issue reporting. The platform enables users to upload issue reports with photos, descriptions, and geolocation data, while authorities monitor and resolve them through a centralized dashboard. With AI-powered assistance and gamified engagement, Sahaya Setu promotes transparent, inclusive, and collaborative urban governance.
 
+
+<img width="220" height="450" alt="WhatsApp Image 2026-07-15 at 19 58 33 (2)" src="https://github.com/user-attachments/assets/baaa9810-05c3-4e6e-bedf-4636cf06bb6d" />
+
+<img width="220" height="450" alt="WhatsApp Image 2026-07-15 at 19 58 32 (1)" src="https://github.com/user-attachments/assets/542e47b5-d247-4e3e-a2ab-e523efa0a25f" />
+
+<img width="220" height="450" alt="AI_Chatbot" src="https://github.com/user-attachments/assets/08215fc4-c5a4-4d26-a5aa-35d850375d05" />
+
+
+
 ## ✨ Key Features
 
 - **Real-Time Issue Reporting**: Upload civic issues with photos, descriptions, and precise geolocation
@@ -21,12 +30,12 @@ Sahaya Setu bridges the gap between citizens and authorities through community-d
 
 ### Mobile Application
 - **Language**: Kotlin
-- **Backend**: Firebase (Authentication, Realtime Database, Cloud Storage)
+- **Backend**: Firebase / Supabase(Authentication, Realtime Database, Cloud Storage)
 
 ### Web Admin Panel
 - **Frontend**: React
 - **Backend**: Node.js, Express.js
-- **Database**: Firebase
+- **Database**: Firebase/Supabase
 
 ## 🎯 UN Sustainable Development Goals Alignment
 
