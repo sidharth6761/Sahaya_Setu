@@ -1,4 +1,4 @@
-# Sahaya Setu 🏙️
+# Sahaya Setu 
 
 A digital platform empowering citizens to actively participate in maintaining urban ecosystems by reporting and tracking civic issues in real time.
 
@@ -90,23 +90,6 @@ cd sahaya-setu/mobile
 4. Monitor community engagement metrics
 5. Respond to escalated alerts
 
-## 🏗️ Project Structure
-
-```
-sahaya-setu/
-├── mobile/           # Kotlin mobile application
-│   ├── app/
-│   └── build.gradle
-├── web/              # React web admin panel
-│   ├── src/
-│   ├── public/
-│   └── package.json
-├── server/           # Node.js backend
-│   ├── routes/
-│   ├── controllers/
-│   └── server.js
-└── README.md
-```
 
 ## 🤝 Contributing
 
