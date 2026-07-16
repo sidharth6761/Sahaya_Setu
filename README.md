@@ -1,4 +1,4 @@
-# Sahaya Setu 
+# Sahaya Setu- Civic Issue Reporting Platform
 
 A digital platform empowering citizens to actively participate in maintaining urban ecosystems by reporting and tracking civic issues in real time.
 
